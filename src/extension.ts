@@ -38,7 +38,7 @@ class BillViewProvider implements vscode.WebviewViewProvider {
   }
 
   private getHtmlForWebview(webview: vscode.Webview): string {
-    return /* html */ `
+    return `
       <!DOCTYPE html>
       <html lang="en">
       <head>
@@ -50,4 +50,52 @@ class BillViewProvider implements vscode.WebviewViewProvider {
           #input { flex: 1; }
           h2 { margin-top: 0; }
         </style>
-      <
+      </head>
+      <body>
+        <h2>Bill the Mallard 🦆</h2>
+        <div id="messages">
+          <div><strong>Bill:</strong> Quack! I’m Bill, your coding buddy.</div>
+        </div>
+        <div id="inputRow">
+          <input id="input" type="text" placeholder="Ask Bill something..." />
+          <button id="send">Send</button>
+        </div>
+        <script>
+          const vscode = acquireVsCodeApi();
+          const messagesDiv = document.getElementById('messages');
+          const input = document.getElementById('input');
+          const sendBtn = document.getElementById('send');
+
+          function addMessage(sender, text) {
+            const div = document.createElement('div');
+            div.innerHTML = '<strong>' + sender + ':</strong> ' + text;
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+          }
+
+          sendBtn.addEventListener('click', () => {
+            const text = input.value.trim();
+            if (!text) return;
+            addMessage('You', text);
+            vscode.postMessage({ type: 'userMessage', text });
+            input.value = '';
+          });
+
+          input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              sendBtn.click();
+            }
+          });
+
+          window.addEventListener('message', event => {
+            const msg = event.data;
+            if (msg.type === 'billMessage') {
+              addMessage('Bill', msg.text);
+            }
+          });
+        </script>
+      </body>
+      </html>
+    `;
+  }
+}
