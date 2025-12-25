@@ -21,9 +21,11 @@
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0",
-    "@types/node": "^18.0.0",
     "typescript": "^5.0.0",
-    "vscode-test": "^2.5.2"
+    "@types/node": "^18.0.0",
+    "vscode-test": "^2.5.2",
+    "mocha": "^10.0.0",
+    "@types/mocha": "^10.0.0"
   },
   "contributes": {
     "viewsContainers": {
