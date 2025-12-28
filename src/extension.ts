@@ -9,6 +9,89 @@ export function activate(context: vscode.ExtensionContext) {
       provider
     )
   );
+
+  // Command: Index Repository
+  context.subscriptions.push(vscode.commands.registerCommand('bill.indexRepository', async () => {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders) { return vscode.window.showErrorMessage("No workspace open!"); }
+    const rootPath = folders[0].uri.fsPath;
+
+    vscode.window.showInformationMessage("Bill: Indexing repository... 🦆");
+    try {
+      const res = await fetch('http://127.0.0.1:8000/index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root_path: rootPath })
+      });
+      const data = await res.json();
+      vscode.window.showInformationMessage(`Bill: Indexed ${data.files_indexed} files.`);
+    } catch (e) {
+      vscode.window.showErrorMessage(`Bill: Indexing failed. Is backend running?`);
+    }
+  }));
+
+  // Command: Analyze File
+  context.subscriptions.push(vscode.commands.registerCommand('bill.analyzeFile', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) { return vscode.window.showErrorMessage("No active file!"); }
+
+    const content = editor.document.getText();
+    const filename = editor.document.fileName;
+
+    vscode.window.showInformationMessage("Bill: Analyzing for refactors... 🦆");
+    try {
+      const res = await fetch('http://127.0.0.1:8000/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_content: content, filename: filename })
+      });
+      const data = await res.json();
+
+      // Show in a new document or output channel (using untitled doc for visibility)
+      const doc = await vscode.workspace.openTextDocument({
+        content: `Refactor Plan for ${filename}\nLines: ${data.metrics.lines}\n\n${data.plan}`,
+        language: 'markdown'
+      });
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
+
+    } catch (e) {
+      vscode.window.showErrorMessage(`Bill: Analysis failed.`);
+    }
+  }));
+
+  // Command: Dev Diary
+  context.subscriptions.push(vscode.commands.registerCommand('bill.devDiary', async () => {
+    // Naive approach: try to get last 5 commits via git CLI (requires git in path)
+    // In a real extension, use 'vscode.git' extension API or simple-git
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders) return;
+    const cwd = folders[0].uri.fsPath;
+
+    const cp = require('child_process');
+    cp.exec('git log -n 5 --pretty=format:"%s"', { cwd }, async (err: any, stdout: string) => {
+      if (err) { return vscode.window.showErrorMessage("Bill: Could not read git log."); }
+      const commits = stdout.split('\n');
+
+      vscode.window.showInformationMessage("Bill: Writing Dev Diary... 🦆");
+      try {
+        const res = await fetch('http://127.0.0.1:8000/summarize_commits', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ commits: commits })
+        });
+        const data = await res.json();
+
+        const doc = await vscode.workspace.openTextDocument({
+          content: `# Dev Diary 🦆\n\n${data.post}`,
+          language: 'markdown'
+        });
+        await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
+
+      } catch (e) {
+        vscode.window.showErrorMessage(`Bill: Diary generation failed.`);
+      }
+    });
+  }));
 }
 
 export function deactivate() { }
@@ -41,30 +124,16 @@ class BillViewProvider implements vscode.WebviewViewProvider {
           const filename = doc.fileName.split('/').pop(); // simplistic approach
           contextMsg = `[Reading ${filename} (${lang})]`;
 
-          // Heuristic analysis
-          if (text.toLowerCase().includes('hello') || text.toLowerCase().includes('hi')) {
-            analysis = "Quack! Hello there! I see you're coding.";
-          } else if (lang === 'typescript' || lang === 'javascript') {
-            analysis = "Quack! I like strict types! Make sure to check for nulls.";
-          } else if (lang === 'python') {
-            analysis = "Quack! Indentation is key!";
-          } else {
-            analysis = `Quack! I see you are working with ${lang}.`;
-          }
+          // Heuristic analysis removed. Chat is handled by the webview calling the backend directly.
+          // We still send context info for the UI to show what file is active.
 
         } else {
           contextMsg = "[No active editor]";
-          analysis = "Quack! Open a file so I can help!";
         }
 
         webview.postMessage({
           type: 'contextInfo',
           text: contextMsg
-        });
-
-        webview.postMessage({
-          type: 'billMessage',
-          text: `${analysis} You said: "${text}".`
         });
       }
     });
@@ -112,12 +181,29 @@ class BillViewProvider implements vscode.WebviewViewProvider {
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
           }
 
-          sendBtn.addEventListener('click', () => {
-            const text = input.value.trim();
-            if (!text) return;
-            addMessage('You', text);
-            vscode.postMessage({ type: 'userMessage', text });
-            input.value = '';
+          sendBtn.addEventListener('click', async () => {
+             const text = input.value.trim();
+             if (!text) return;
+             
+             addMessage('You', text);
+             input.value = '';
+             
+             // Send to Extension Host for context (optional, but good for tracking)
+             vscode.postMessage({ type: 'userMessage', text });
+
+             // Call Local Backend
+             try {
+                const response = await fetch('http://127.0.0.1:8000/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                const data = await response.json();
+                addMessage('Bill', data.reply);
+             } catch (err) {
+                addMessage('Bill', 'Quack! I cannot reach my brain (backend). Is the server running?');
+                console.error(err);
+             }
           });
 
           input.addEventListener('keydown', (e) => {
@@ -128,9 +214,7 @@ class BillViewProvider implements vscode.WebviewViewProvider {
 
           window.addEventListener('message', event => {
             const msg = event.data;
-            if (msg.type === 'billMessage') {
-              addMessage('Bill', msg.text);
-            } else if (msg.type === 'contextInfo') {
+             if (msg.type === 'contextInfo') {
               addMessage('', msg.text, true);
             }
           });

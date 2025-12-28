@@ -45,6 +45,23 @@
           "type": "webview"
         }
       ]
-    }
+    },
+    "commands": [
+      {
+        "command": "bill.indexRepository",
+        "title": "Bill: Index Repository 🧠",
+        "category": "Bill"
+      },
+      {
+        "command": "bill.analyzeFile",
+        "title": "Bill: Analyze & Refactor File 🔨",
+        "category": "Bill"
+      },
+      {
+        "command": "bill.devDiary",
+        "title": "Bill: Generate Dev Diary 📝",
+        "category": "Bill"
+      }
+    ]
   }
 }
