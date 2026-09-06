@@ -1,13 +1,15 @@
+from __future__ import annotations
+
 import os
 import glob
-from typing import List
+from typing import List, Optional
 
 import chromadb
 from chromadb.utils import embedding_functions
 from openai import OpenAI
 
 class RAGService:
-    def __init__(self, api_key: str | None = None):
+    def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             print("Warning: No OpenAI API Key found. RAG will not work effectively.")
@@ -92,8 +94,10 @@ class RAGService:
         context_str = "\n\n---\n\n".join(results["documents"][0]) if results["documents"] else ""
         return context_str
 
-    def chat_with_context(self, message: str):
+    def chat_with_context(self, message: str, editor_context: Optional[str] = None):
         context = self.query(message)
+        if editor_context:
+            context = f"Active editor context:\n{editor_context}\n\nRetrieved repository context:\n{context}"
         
         system_prompt = (
             "You are Bill the Mallard, a helpful coding AI duck. "

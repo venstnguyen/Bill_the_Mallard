@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os
+from typing import List, Optional
 import uvicorn
 
 from rag_service import RAGService
@@ -19,7 +21,7 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str
-    context: str | None = None
+    context: Optional[str] = None
 
 class IndexRequest(BaseModel):
     root_path: str
@@ -34,16 +36,18 @@ async def root():
 @app.post("/index")
 async def index_repo(request: IndexRequest):
     result = rag.index_repository(request.root_path)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
     return result
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
     try:
-        reply = rag.chat_with_context(request.message)
+        reply = rag.chat_with_context(request.message, request.context)
         return {"reply": reply}
     except Exception as e:
         print(f"Error in chat: {e}")
-        return {"reply": f"Quack! Something went wrong: {str(e)}"}
+        raise HTTPException(status_code=502, detail=f"Bill could not reach the language model: {e}") from e
 
 class RefactorRequest(BaseModel):
     file_content: str
@@ -51,7 +55,6 @@ class RefactorRequest(BaseModel):
 
 @app.post("/analyze")
 async def analyze_refactor(request: RefactorRequest):
-    # Static Metrics
     import re
     lines = len(request.file_content.split('\n'))
     
@@ -79,7 +82,7 @@ async def analyze_refactor(request: RefactorRequest):
         plan = f"Could not generate plan: {e}"
 
     return {
-        "metrics": {"lines": lines},
+        "metrics": {"lines": lines, "functions": function_count},
         "plan": plan
     }
 

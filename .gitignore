@@ -1,4 +1,11 @@
-out
+node_modules/
+out/
+.vscode-test/
+.env
+.venv/
+backend/data/
+backend/__pycache__/
+*.py[cod]out
 dist
 node_modules
 .vscode-test/

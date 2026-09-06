@@ -10,7 +10,10 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:billMallardView"
+    "onView:billMallardView",
+    "onCommand:bill.indexRepository",
+    "onCommand:bill.analyzeFile",
+    "onCommand:bill.devDiary"
   ],
   "main": "./out/extension.js",
   "scripts": {

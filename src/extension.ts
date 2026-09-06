@@ -23,6 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ root_path: rootPath })
       });
+      if (!res.ok) { throw new Error('Backend rejected the indexing request'); }
       const data = await res.json();
       vscode.window.showInformationMessage(`Bill: Indexed ${data.files_indexed} files.`);
     } catch (e) {
@@ -45,11 +46,12 @@ export function activate(context: vscode.ExtensionContext) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file_content: content, filename: filename })
       });
+      if (!res.ok) { throw new Error('Backend rejected the analysis request'); }
       const data = await res.json();
 
       // Show in a new document or output channel (using untitled doc for visibility)
       const doc = await vscode.workspace.openTextDocument({
-        content: `Refactor Plan for ${filename}\nLines: ${data.metrics.lines}\n\n${data.plan}`,
+        content: `# Refactor Plan for ${filename}\n\n- Lines: ${data.metrics.lines}\n- Estimated functions: ${data.metrics.functions}\n\n${data.plan}`,
         language: 'markdown'
       });
       await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
@@ -79,7 +81,8 @@ export function activate(context: vscode.ExtensionContext) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ commits: commits })
         });
-        const data = await res.json();
+          if (!res.ok) { throw new Error('Backend rejected the diary request'); }
+          const data = await res.json();
 
         const doc = await vscode.workspace.openTextDocument({
           content: `# Dev Diary 🦆\n\n${data.post}`,
@@ -105,41 +108,38 @@ class BillViewProvider implements vscode.WebviewViewProvider {
     const webview = webviewView.webview;
     webview.options = {
       enableScripts: true,
+      localResourceRoots: [this.extensionUri],
     };
 
-    webview.html = this.getHtmlForWebview(webview);
+    const billImageUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'Bill_the_mallard.jpg')
+    );
+    webview.html = this.getHtmlForWebview(webview, billImageUri);
+    webview.postMessage(this.getEditorContextMessage());
 
     webview.onDidReceiveMessage(message => {
       if (message.type === 'userMessage') {
-        const text = message.text as string;
-
-        // Get active editor context
-        const editor = vscode.window.activeTextEditor;
-        let contextMsg = "";
-        let analysis = "";
-
-        if (editor) {
-          const doc = editor.document;
-          const lang = doc.languageId;
-          const filename = doc.fileName.split('/').pop(); // simplistic approach
-          contextMsg = `[Reading ${filename} (${lang})]`;
-
-          // Heuristic analysis removed. Chat is handled by the webview calling the backend directly.
-          // We still send context info for the UI to show what file is active.
-
-        } else {
-          contextMsg = "[No active editor]";
-        }
-
-        webview.postMessage({
-          type: 'contextInfo',
-          text: contextMsg
-        });
+        webview.postMessage(this.getEditorContextMessage());
       }
     });
   }
 
-  private getHtmlForWebview(webview: vscode.Webview): string {
+  private getEditorContextMessage() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return { type: 'contextInfo', text: '[No active editor]', editorContext: '' };
+    }
+
+    const doc = editor.document;
+    const filename = doc.fileName.split('/').pop() || doc.fileName;
+    return {
+      type: 'contextInfo',
+      text: `[Reading ${filename} (${doc.languageId})]`,
+      editorContext: `The active file is ${filename} (${doc.languageId}).`
+    };
+  }
+
+  private getHtmlForWebview(webview: vscode.Webview, billImageUri: vscode.Uri): string {
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -148,9 +148,10 @@ class BillViewProvider implements vscode.WebviewViewProvider {
         <style>
           body { font-family: sans-serif; padding: 10px; color: var(--vscode-foreground); }
           #messages { height: 220px; overflow-y: auto; border: 1px solid var(--vscode-editorWidget-border); padding: 8px; margin-bottom: 8px; }
-          #inputRow { display: flex; gap: 4px; }
+          #inputRow { display: flex; align-items: center; gap: 6px; }
           #input { flex: 1; }
-          h2 { margin-top: 0; }
+          .bill-avatar { width: 34px; height: 34px; object-fit: cover; image-rendering: pixelated; border-radius: 4px; border: 1px solid var(--vscode-editorWidget-border); }
+          h2 { margin: 0 0 10px; }
           .system-msg { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 4px; }
         </style>
       </head>
@@ -160,6 +161,7 @@ class BillViewProvider implements vscode.WebviewViewProvider {
           <div><strong>Bill:</strong> Quack! I’m Bill, your coding buddy. I can see what you're working on!</div>
         </div>
         <div id="inputRow">
+          <img class="bill-avatar" src="${billImageUri}" alt="Bill the Mallard" />
           <input id="input" type="text" placeholder="Ask Bill something..." />
           <button id="send">Send</button>
         </div>
@@ -169,13 +171,18 @@ class BillViewProvider implements vscode.WebviewViewProvider {
           const input = document.getElementById('input');
           const sendBtn = document.getElementById('send');
 
+          let activeEditorContext = '';
+
           function addMessage(sender, text, isSystem = false) {
             const div = document.createElement('div');
             if (isSystem) {
               div.className = 'system-msg';
               div.textContent = text;
             } else {
-              div.innerHTML = '<strong>' + sender + ':</strong> ' + text;
+              const label = document.createElement('strong');
+              label.textContent = sender + ': ';
+              div.appendChild(label);
+              div.appendChild(document.createTextNode(text));
             }
             messagesDiv.appendChild(div);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -196,12 +203,19 @@ class BillViewProvider implements vscode.WebviewViewProvider {
                 const response = await fetch('http://127.0.0.1:8000/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text })
+                    body: JSON.stringify({ message: text, context: activeEditorContext })
                 });
                 const data = await response.json();
+                if (!response.ok) {
+                  throw new Error(data.detail || 'Backend request failed (' + response.status + ')');
+                }
+                if (typeof data.reply !== 'string') {
+                  throw new Error('Backend returned no reply');
+                }
                 addMessage('Bill', data.reply);
              } catch (err) {
-                addMessage('Bill', 'Quack! I cannot reach my brain (backend). Is the server running?');
+                const detail = err instanceof Error ? err.message : 'Unknown backend error';
+               addMessage('Bill', 'Quack! ' + detail);
                 console.error(err);
              }
           });
@@ -215,6 +229,7 @@ class BillViewProvider implements vscode.WebviewViewProvider {
           window.addEventListener('message', event => {
             const msg = event.data;
              if (msg.type === 'contextInfo') {
+              activeEditorContext = msg.editorContext || '';
               addMessage('', msg.text, true);
             }
           });
